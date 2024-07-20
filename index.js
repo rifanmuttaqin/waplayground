@@ -1,7 +1,41 @@
 const {DisconnectReason, useMultiFileAuthState} = require("@whiskeysockets/baileys")
 const makeWASocket = require("@whiskeysockets/baileys").default
+const express = require('express');
 
 let sock;
+
+const app = express();
+app.use(express.json());
+
+async function sendMessageByNumber(number, textString){
+    try {
+        const checkNumbers = await checkNumber(number);
+        if(checkNumbers.exists){
+            const sentMsg = await sendMessage(checkNumbers.jid, textString); // local function
+            return sentMsg;
+        }
+        return false;
+    } catch (err) {
+        console.error("Failed to send message", err);
+    }
+}
+
+async function checkNumber(param) {
+    const id = param
+    const [result] = await sock.onWhatsApp(id)
+    if (result) {
+        return result; // sample result = { exists: true, jid: '6285735727063@s.whatsapp.net' }
+    }
+}
+
+async function sendMessage(from, text) {
+    try {
+        const sentMsg = await sock.sendMessage(from, {text: text});
+        console.log("Message sent successfully", sentMsg);
+    } catch (err) {
+        console.error("Failed to send message", err);
+    }
+}
 
 async function connectionLogic() {
     const {state, saveCreds} = await useMultiFileAuthState('auth_info_baileys')
@@ -17,42 +51,12 @@ async function connectionLogic() {
         if (connection === 'close') {
             const shouldReconnect = lastDisconnect?.error?.output?.statusCode !== DisconnectReason.loggedOut;
             if (shouldReconnect) {
-                connectionLogic();
+                connectionLogic(); // return self;
             }
         } else if (connection === 'open') {
             console.log('Connection opened');
         }
     })
-
-    // reply message
-    async function sendMessage(from, text) {
-        try {
-            const sentMsg = await sock.sendMessage(from, {text: text});
-            console.log("Message sent successfully", sentMsg);
-        } catch (err) {
-            console.error("Failed to send message", err);
-        }
-    }
-
-    async function sendMessageByNumber(number, textString){
-        try {
-            const checkNumbers = await checkNumber(number);
-            if(checkNumbers.exists){
-                const sentMsg = await sendMessage(checkNumbers.jid, {text: textString});
-                return sentMsg;
-            }
-        } catch (err) {
-            console.error("Failed to send message", err);
-        }
-    }
-
-    async function checkNumber(param) {
-        const id = param
-        const [result] = await sock.onWhatsApp(id)
-        if (result) {
-            return result; // sample result = { exists: true, jid: '6285735727063@s.whatsapp.net' }
-        }
-    }
 
     async function keyTrigger(msgText, from) {
         if (msgText) {
@@ -83,21 +87,22 @@ async function connectionLogic() {
 connectionLogic();
 
 // API endpoint to send a message
-// app.post('/send-message', async (req, res) => {
-//     const { id, text } = req.body;
-//     if (!id || !text) {
-//         return res.status(400).send('Missing id or text');
-//     }
-//     try {
-//         await sock.sendMessage(id, { text });
-//         res.status(200).send('Message sent successfully');
-//     } catch (err) {
-//         console.error('Failed to send message', err);
-//         res.status(500).send('Failed to send message');
-//     }
-// });
-//
-// const PORT = process.env.PORT || 3000;
-// app.listen(PORT, () => {
-//     console.log(`Server is running on port ${PORT}`);
-// });
+app.post('/send-message', async (req, res) => {
+    const { number, text } = req.body;
+
+    if (!number || !text) {
+        return res.status(400).send('Missing number or text');
+    }
+
+    try {
+        await sendMessageByNumber(number,  text);
+        res.status(200).send('Message sent successfully');
+    } catch (err) {
+        res.status(500).send('Failed to send message');
+    }
+});
+
+const PORT = process.env.PORT || 3000;
+app.listen(PORT, () => {
+    console.log(`Server is running on port ${PORT}`);
+});
