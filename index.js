@@ -5,7 +5,13 @@ const express = require('express');
 let sock;
 
 const app = express();
+const http = require('http');
+const WebSocket = require('ws');
+const fs = require('fs');
+
 app.use(express.json());
+const server = http.createServer(app);
+const wss = new WebSocket.Server({ server });
 
 async function sendMessageByNumber(number, textString){
     try {
@@ -37,6 +43,24 @@ async function sendMessage(from, text) {
     }
 }
 
+const sendQRCodeToClients = (qrData) => {
+    wss.clients.forEach(client => {
+        if (client.readyState === WebSocket.OPEN) {
+            client.send(JSON.stringify({ qr: qrData }));
+        }
+    });
+};
+
+async function removeDirAuth(authDir){
+    try {
+        if (fs.existsSync(authDir)) {
+            fs.rmSync(authDir, { recursive: true, force: true });
+        }
+    } catch (error) {
+        console.error(`Failed to delete authentication files in ${authDir}`, error);
+    }
+}
+
 async function connectionLogic() {
     const {state, saveCreds} = await useMultiFileAuthState('auth_info_baileys')
     sock = makeWASocket({
@@ -47,14 +71,19 @@ async function connectionLogic() {
 
     sock.ev.on('connection.update', async (update) => {
         const {connection, lastDisconnect, qr} = update || {}
-
         if (connection === 'close') {
             const shouldReconnect = lastDisconnect?.error?.output?.statusCode !== DisconnectReason.loggedOut;
             if (shouldReconnect) {
                 connectionLogic(); // return self;
+            } else
+            {
+                await removeDirAuth('auth_info_baileys');
+                connectionLogic();
             }
         } else if (connection === 'open') {
             console.log('Connection opened');
+        } else if (connection === 'connecting'){
+            console.log('Connection connecting');
         }
     })
 
@@ -86,6 +115,16 @@ async function connectionLogic() {
 
 connectionLogic();
 
+wss.on('connection', (ws) => {
+    console.log('A client connected WS');
+    ws.on('message', (message) => {
+        console.log(`Received message => ${message}`);
+    });
+    ws.on('close', () => {
+        console.log('A client disconnected WS');
+    });
+});
+
 // API endpoint to send a message
 app.post('/send-message', async (req, res) => {
     const { number, text } = req.body;
@@ -101,6 +140,10 @@ app.post('/send-message', async (req, res) => {
         res.status(500).send('Failed to send message');
     }
 });
+
+app.get('/',async (req,res) =>{
+    res.status(200).send('Welcome to whatsapp API');
+})
 
 const PORT = process.env.PORT || 3000;
 app.listen(PORT, () => {
